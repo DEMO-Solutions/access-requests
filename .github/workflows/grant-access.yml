@@ -1,0 +1,84 @@
+name: Grant access
+on:
+  issues:
+    types: [opened]
+  workflow_dispatch:
+    inputs:
+      code:
+        description: Client code
+        required: true
+      username:
+        description: GitHub username to check
+        required: true
+      dry_run:
+        description: "true = validate only, never invite"
+        default: "true"
+permissions:
+  issues: write
+concurrency:
+  group: grant-access
+  cancel-in-progress: false
+jobs:
+  grant:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate request and invite
+        env:
+          CLIENT_MAP: ${{ secrets.CLIENT_MAP }}
+          INVITE_TOKEN: ${{ secrets.ORG_INVITE_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_USER: ${{ github.event.issue.user.login }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          IN_CODE: ${{ inputs.code }}
+          IN_USER: ${{ inputs.username }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          EVENT: ${{ github.event_name }}
+          ORG: DEMO-Solutions
+          REPO_SLUG: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "issues" ]; then
+            code=$(printf '%s' "$ISSUE_BODY" | awk '/^### /{f=0} /^### Client code/{f=1;next} f&&NF{print;exit}')
+            user="$ISSUE_USER"
+            dry="false"
+          else
+            code="$IN_CODE"; user="$IN_USER"; dry="${DRY_RUN:-true}"
+          fi
+          code=$(printf '%s' "$code" | tr -d '[:space:]')
+          [ -n "$code" ] && echo "::add-mask::$code"
+          note() {
+            if [ "$EVENT" = "issues" ]; then
+              gh issue comment "$ISSUE_NUMBER" --repo "$REPO_SLUG" --body "$1" >/dev/null
+              gh issue close "$ISSUE_NUMBER" --repo "$REPO_SLUG" >/dev/null
+            else
+              echo "$1"
+            fi
+          }
+          if ! printf '%s' "$code" | grep -Eq '^[A-Za-z0-9-]{6,48}$'; then
+            note "That code is not valid. / Ese código no es válido."; exit 0
+          fi
+          if ! printf '%s' "$user" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$'; then
+            note "That username is not valid. / Ese usuario no es válido."; exit 0
+          fi
+          repo=$(printf '%s' "$CLIENT_MAP" | jq -r --arg c "$code" '.[$c] // empty')
+          if [ -z "$repo" ]; then
+            note "That code was not recognized. / Ese código no se reconoció."; exit 0
+          fi
+          if ! printf '%s' "$repo" | grep -Eq '^[A-Za-z0-9._-]{1,100}$'; then
+            note "Configuration problem. Please contact the presenter."; exit 0
+          fi
+          if [ "$dry" = "true" ]; then
+            echo "DRY RUN OK: code recognized; would invite '$user' with read access to the mapped repo."; exit 0
+          fi
+          if [ -z "${INVITE_TOKEN:-}" ]; then
+            note "Access could not be granted automatically yet. The presenter will invite you. / El presentador le enviará la invitación."; exit 0
+          fi
+          status=$(curl -sS -o /dev/null -w '%{http_code}' -X PUT \
+            -H "Authorization: Bearer $INVITE_TOKEN" -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$ORG/$repo/collaborators/$user" -d '{"permission":"pull"}')
+          case "$status" in
+            201) note "Invitation sent. Check the email linked to your GitHub account (or github.com/notifications) and accept it. / Invitación enviada. Revise el correo de su cuenta de GitHub y acéptela." ;;
+            204) note "You already have access. / Ya tiene acceso." ;;
+            *)   note "Access could not be granted (code $status). The presenter has been notified. / No se pudo otorgar el acceso." ;;
+          esac
