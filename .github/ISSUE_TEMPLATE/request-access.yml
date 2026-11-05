@@ -1,0 +1,25 @@
+name: Request access to meeting content / Solicitar acceso al contenido
+description: Ask for read-only access to your meeting's content / Solicite acceso de solo lectura
+title: "Access request / Solicitud de acceso"
+labels: ["access-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Your GitHub username is public on this request.** / **Su usuario de GitHub es público en esta solicitud.**
+        You need a free GitHub account. / Necesita una cuenta gratuita de GitHub.
+  - type: input
+    id: code
+    attributes:
+      label: Client code / Código de cliente
+      description: The code that came with your link. / El código que venía con su enlace.
+      placeholder: example-AB12CD34
+    validations:
+      required: true
+  - type: checkboxes
+    id: ok
+    attributes:
+      label: Confirmation / Confirmación
+      options:
+        - label: I understand my GitHub username will be public, and I want read-only access. / Entiendo que mi usuario será público y quiero acceso de solo lectura.
+          required: true
